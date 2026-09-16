@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, Eye, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import AppShell from '../components/AppShell';
 import StatusBadge from '../components/StatusBadge';
@@ -17,6 +18,7 @@ const ALL_ROWS = [
 const PER_PAGE = 6;
 
 export default function ReviewQueue() {
+  const navigate = useNavigate();
   const [scheme, setScheme]       = useState('All');
   const [status, setStatus]       = useState('All');
   const [state, setState]         = useState('All');
@@ -161,7 +163,7 @@ export default function ReviewQueue() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-1">
-                        <button title="View" className="p-1.5 rounded text-[#6b7a8d] hover:text-[#1a3557] hover:bg-slate-100 transition-colors">
+                        <button title="View" onClick={() => navigate(`/application/${row.id}`)} className="p-1.5 rounded text-[#6b7a8d] hover:text-[#1a3557] hover:bg-slate-100 transition-colors">
                           <Eye size={15} />
                         </button>
                         <button title="Approve" className="p-1.5 rounded text-[#6b7a8d] hover:text-green-700 hover:bg-green-50 transition-colors">

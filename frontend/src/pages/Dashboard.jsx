@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   FileText, Clock, AlertTriangle, CheckCircle2,
   ArrowRight, ClipboardList, Eye,
@@ -33,6 +33,7 @@ const QUICK_ACTIONS = [
 /* ─────────────────────────────────────────────────────────── */
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   return (
     <AppShell title="Dashboard">
       {/* ── Stat cards ─────────────────────────────────────── */}
@@ -111,6 +112,7 @@ export default function Dashboard() {
                     <td className="px-4 py-3 text-right">
                       <button
                         title="View application"
+                        onClick={() => navigate(`/application/${app.id}`)}
                         className="p-1.5 rounded text-[#6b7a8d] hover:text-[#1a3557] hover:bg-slate-100 transition-colors"
                       >
                         <Eye size={15} />

@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import ReviewQueue from './pages/ReviewQueue';
 import Merit from './pages/Merit';
 import Analytics from './pages/Analytics';
+import ApplicationDetail from './pages/ApplicationDetail';
 import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
@@ -39,6 +40,14 @@ function App() {
         element={
           <ProtectedRoute>
             <Analytics />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/application/:id"
+        element={
+          <ProtectedRoute>
+            <ApplicationDetail />
           </ProtectedRoute>
         }
       />
