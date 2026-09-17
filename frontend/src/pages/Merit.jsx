@@ -1,35 +1,24 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Eye, X } from 'lucide-react';
 import AppShell from '../components/AppShell';
+import api from '../api/axios';
 
-/* ─── Mock candidates ─────────────────────────────────────── */
-// Each candidate has passed AI verification and admin review.
-// Raw sub-scores are out of 100.
-const ALL_CANDIDATES = [
-  { id: 'APP-2024-101', name: 'Ananya Mishra',     state: 'Odisha',        scheme: 'NFST', academic: 88, exam: 76, socioEconomic: 92, interview: 80 },
-  { id: 'APP-2024-102', name: 'Suresh Baiga',      state: 'Chhattisgarh',  scheme: 'NFST', academic: 74, exam: 82, socioEconomic: 95, interview: 70 },
-  { id: 'APP-2024-103', name: 'Priya Patel',       state: 'Jharkhand',     scheme: 'NFST', academic: 91, exam: 88, socioEconomic: 78, interview: 85 },
-  { id: 'APP-2024-104', name: 'Deepak Oraon',      state: 'Jharkhand',     scheme: 'NFST', academic: 65, exam: 70, socioEconomic: 98, interview: 60 },
-  { id: 'APP-2024-105', name: 'Kavya Nayak',       state: 'Odisha',        scheme: 'NFST', academic: 80, exam: 79, socioEconomic: 85, interview: 78 },
-  { id: 'APP-2024-106', name: 'Ramesh Gond',       state: 'Madhya Pradesh',scheme: 'NFST', academic: 70, exam: 65, socioEconomic: 90, interview: 72 },
-  { id: 'APP-2024-107', name: 'Sneha Munda',       state: 'Jharkhand',     scheme: 'NFST', academic: 85, exam: 83, socioEconomic: 80, interview: 88 },
-  { id: 'APP-2024-108', name: 'Vikram Bhil',       state: 'Rajasthan',     scheme: 'NFST', academic: 77, exam: 74, socioEconomic: 88, interview: 65 },
-  { id: 'APP-2024-109', name: 'Meena Korku',       state: 'Madhya Pradesh',scheme: 'NFST', academic: 60, exam: 55, socioEconomic: 96, interview: 58 },
-  { id: 'APP-2024-110', name: 'Arjun Halbi',       state: 'Chhattisgarh',  scheme: 'NFST', academic: 82, exam: 80, socioEconomic: 83, interview: 76 },
-  { id: 'APP-2024-201', name: 'Sita Devi Santali', state: 'West Bengal',   scheme: 'NOS',  academic: 79, exam: 72, socioEconomic: 91, interview: 82 },
-  { id: 'APP-2024-202', name: 'Mohan Kol',         state: 'Uttar Pradesh', scheme: 'NOS',  academic: 68, exam: 60, socioEconomic: 94, interview: 63 },
-];
-
-const SEATS = { NFST: 8, NOS: 3 };
+// TODO: replace with real seat-limit config once available
+const SEATS = { NFST: 50, NOS: 30 };
 
 /* ─── Helpers ────────────────────────────────────────────── */
 function computeWeighted(c, w) {
+  const academic      = c.meritScores?.academic || 0;
+  const exam          = c.meritScores?.exam || 0;
+  const socioEconomic = c.meritScores?.socioEconomic || 0;
+  const interview     = c.meritScores?.interview || 0;
+
   return (
-    (c.academic       * w.academic      / 100) +
-    (c.exam           * w.exam          / 100) +
-    (c.socioEconomic  * w.socioEconomic / 100) +
-    (c.interview      * w.interview     / 100)
+    (academic      * w.academic      / 100) +
+    (exam          * w.exam          / 100) +
+    (socioEconomic * w.socioEconomic / 100) +
+    (interview     * w.interview     / 100)
   );
 }
 
@@ -78,7 +67,19 @@ function SliderRow({ label, value, onChange }) {
   );
 }
 
-function RankBadge({ rank, isWaitlist }) {
+function RankBadge({ rank, isWaitlist, isSelected }) {
+  if (isSelected) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-[#1a3557] text-white text-[12px] font-semibold">
+          {rank}
+        </span>
+        <span className="text-[10px] font-medium bg-emerald-100 text-emerald-800 border border-emerald-300 rounded px-1.5 py-0.5">
+          Selected
+        </span>
+      </div>
+    );
+  }
   if (isWaitlist) {
     return (
       <div className="flex items-center gap-1.5">
@@ -110,9 +111,31 @@ export default function Merit() {
     socioEconomic: 20,
     interview: 10,
   });
+  const [candidates, setCandidates] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [showModal, setShowModal] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchMeritList = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.get('/merit-list', { params: { scheme } });
+      setCandidates(res.data?.candidates || []);
+    } catch (err) {
+      console.error('Failed to fetch merit list:', err);
+      setError('Failed to load merit list.');
+    } finally {
+      setLoading(false);
+    }
+  }, [scheme]);
+
+  useEffect(() => {
+    fetchMeritList();
+  }, [fetchMeritList]);
 
   const totalWeight = weights.academic + weights.exam + weights.socioEconomic + weights.interview;
   const weightValid = totalWeight === 100;
@@ -120,12 +143,16 @@ export default function Merit() {
 
   /* Filtered + ranked candidates, recomputed whenever scheme or weights change */
   const rankedCandidates = useMemo(() => {
-    const filtered = ALL_CANDIDATES.filter((c) => c.scheme === scheme);
-    return filtered
+    return candidates
       .map((c) => ({ ...c, weightedScore: computeWeighted(c, weights) }))
       .sort((a, b) => b.weightedScore - a.weightedScore)
-      .map((c, i) => ({ ...c, rank: i + 1, isWaitlist: i + 1 > seats }));
-  }, [scheme, weights]);
+      .map((c, i) => ({
+        ...c,
+        rank: i + 1,
+        isWaitlist: i + 1 > seats,
+        isSelected: c.status === 'Selected',
+      }));
+  }, [candidates, weights, seats]);
 
   /* Reset selections when scheme changes */
   const handleSchemeChange = (val) => {
@@ -134,7 +161,8 @@ export default function Merit() {
     setSuccessMsg('');
   };
 
-  const toggleRow = (id) => {
+  const toggleRow = (id, isSelected) => {
+    if (isSelected) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
@@ -142,30 +170,52 @@ export default function Merit() {
     });
   };
 
-  const allPageChecked =
-    rankedCandidates.length > 0 &&
-    rankedCandidates.every((c) => selectedIds.has(c.id));
+  const selectableCandidates = rankedCandidates.filter((c) => !c.isSelected);
+  const allSelectableChecked =
+    selectableCandidates.length > 0 &&
+    selectableCandidates.every((c) => selectedIds.has(c._id));
 
   const toggleAll = () => {
-    if (allPageChecked) {
+    if (allSelectableChecked) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(rankedCandidates.map((c) => c.id)));
+      setSelectedIds(new Set(selectableCandidates.map((c) => c._id)));
     }
   };
 
-  const handleFinalise = () => {
-    const n = selectedIds.size;
-    setShowModal(false);
-    setSuccessMsg(`Selection finalised. ${n} candidate${n !== 1 ? 's' : ''} marked as selected.`);
-    setSelectedIds(new Set());
+  const handleFinaliseConfirm = async () => {
+    if (selectedIds.size === 0) return;
+    setActionLoading(true);
+    try {
+      const res = await api.patch('/applications/finalize-selection', {
+        ids: Array.from(selectedIds),
+      });
+      const count = res.data?.selected || selectedIds.size;
+      setShowModal(false);
+      setSuccessMsg(`Selection finalised. ${count} candidate${count !== 1 ? 's' : ''} marked as selected.`);
+      setSelectedIds(new Set());
+      await fetchMeritList();
+    } catch (err) {
+      console.error('Failed to finalise selection:', err);
+      setError('Failed to finalise selection.');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const setWeight = (key) => (val) =>
     setWeights((prev) => ({ ...prev, [key]: val }));
 
+  // Currently selected = newly selected + already selected
+  const currentlySelectedCount = selectedIds.size + rankedCandidates.filter(c => c.isSelected).length;
+
   return (
     <AppShell title="Merit & Selection">
+      {error && (
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-700 text-[13px] rounded">
+          {error}
+        </div>
+      )}
 
       {/* ── a) Scheme selector bar ─────────────────────────── */}
       <div className="flex flex-wrap items-center gap-5 mb-5 pb-5 border-b border-[#dde1e7]">
@@ -189,15 +239,15 @@ export default function Merit() {
           />
           <SummaryChip
             label="Currently selected"
-            value={selectedIds.size}
+            value={currentlySelectedCount}
           />
         </div>
 
         <button
           onClick={() => setShowModal(true)}
-          disabled={selectedIds.size === 0}
-          className={`ml-auto px-4 py-2 bg-[#1a3557] text-white rounded text-[13px] transition-colors
-            ${selectedIds.size === 0 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[#102540]'}`}
+          disabled={selectedIds.size === 0 || actionLoading}
+          className={`ml-auto px-4 py-2 bg-[#1a3557] text-white rounded text-[13px] transition-colors cursor-pointer
+            ${selectedIds.size === 0 || actionLoading ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[#102540]'}`}
         >
           Finalise Selection
         </button>
@@ -247,7 +297,7 @@ export default function Merit() {
           <span>{successMsg}</span>
           <button
             onClick={() => setSuccessMsg('')}
-            className="ml-4 text-green-600 hover:text-green-800 transition-colors"
+            className="ml-4 text-green-600 hover:text-green-800 transition-colors cursor-pointer"
           >
             <X size={14} />
           </button>
@@ -270,12 +320,13 @@ export default function Merit() {
                 <th className="px-4 py-3 w-10 text-center">
                   <input
                     type="checkbox"
-                    checked={allPageChecked}
+                    checked={allSelectableChecked}
                     onChange={toggleAll}
-                    className="rounded border-[#c0c8d2] cursor-pointer"
+                    disabled={selectableCandidates.length === 0}
+                    className="rounded border-[#c0c8d2] cursor-pointer disabled:cursor-not-allowed"
                   />
                 </th>
-                <th className="text-left px-4 py-3 w-16">Rank</th>
+                <th className="text-left px-4 py-3 w-28">Rank</th>
                 <th className="text-left px-4 py-3">Applicant</th>
                 <th className="text-left px-4 py-3 hidden md:table-cell">State</th>
                 <th className="text-left px-4 py-3 hidden md:table-cell">Academic</th>
@@ -286,44 +337,76 @@ export default function Merit() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#f0f2f5]">
-              {rankedCandidates.map((c) => (
-                <tr
-                  key={c.id}
-                  className={`transition-colors ${c.isWaitlist ? 'bg-[#fcfcfd] hover:bg-[#f9f9fb]' : 'hover:bg-[#fafbfc]'}`}
-                >
-                  <td className="px-4 py-3 text-center">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(c.id)}
-                      onChange={() => toggleRow(c.id)}
-                      className="rounded border-[#c0c8d2] cursor-pointer"
-                    />
-                  </td>
-                  <td className="px-4 py-3">
-                    <RankBadge rank={c.rank} isWaitlist={c.isWaitlist} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-[#1c2b3a]">{c.name}</div>
-                    <div className="text-[11px] text-[#9aa3af] mt-0.5">{c.id}</div>
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell text-[#4b5563]">{c.state}</td>
-                  <td className="px-4 py-3 hidden md:table-cell text-[#4b5563]">{c.academic}</td>
-                  <td className="px-4 py-3 hidden lg:table-cell text-[#4b5563]">{c.exam}</td>
-                  <td className="px-4 py-3 hidden lg:table-cell text-[#4b5563]">{c.socioEconomic}</td>
-                  <td className="px-4 py-3 font-semibold text-[#1c2b3a]">
-                    {c.weightedScore.toFixed(1)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      title="View application"
-                      onClick={() => navigate(`/application/${c.id}`)}
-                      className="p-1.5 rounded text-[#6b7a8d] hover:text-[#1a3557] hover:bg-slate-100 transition-colors"
-                    >
-                      <Eye size={15} />
-                    </button>
+              {loading ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-10 text-center text-[#9aa3af]">
+                    Loading merit candidates...
                   </td>
                 </tr>
-              ))}
+              ) : rankedCandidates.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-10 text-center text-[#9aa3af]">
+                    No eligible candidates found for scheme {scheme}.
+                  </td>
+                </tr>
+              ) : (
+                rankedCandidates.map((c) => {
+                  const isChecked = c.isSelected || selectedIds.has(c._id);
+                  return (
+                    <tr
+                      key={c._id}
+                      className={`transition-colors ${
+                        c.isSelected
+                          ? 'bg-emerald-50/40 hover:bg-emerald-50/70'
+                          : c.isWaitlist
+                            ? 'bg-[#fcfcfd] hover:bg-[#f9f9fb]'
+                            : 'hover:bg-[#fafbfc]'
+                      }`}
+                    >
+                      <td className="px-4 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          disabled={c.isSelected}
+                          onChange={() => toggleRow(c._id, c.isSelected)}
+                          className="rounded border-[#c0c8d2] cursor-pointer disabled:cursor-not-allowed"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <RankBadge rank={c.rank} isWaitlist={c.isWaitlist} isSelected={c.isSelected} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-[#1c2b3a]">{c.name}</div>
+                        <div className="text-[11px] text-[#9aa3af] mt-0.5">
+                          {c.applicationCode || c._id}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 hidden md:table-cell text-[#4b5563]">{c.state}</td>
+                      <td className="px-4 py-3 hidden md:table-cell text-[#4b5563]">
+                        {c.meritScores?.academic ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 hidden lg:table-cell text-[#4b5563]">
+                        {c.meritScores?.exam ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 hidden lg:table-cell text-[#4b5563]">
+                        {c.meritScores?.socioEconomic ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-[#1c2b3a]">
+                        {c.weightedScore.toFixed(1)}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          title="View application"
+                          onClick={() => navigate(`/application/${c._id}`)}
+                          className="p-1.5 rounded text-[#6b7a8d] hover:text-[#1a3557] hover:bg-slate-100 transition-colors cursor-pointer"
+                        >
+                          <Eye size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -351,15 +434,17 @@ export default function Merit() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setShowModal(false)}
-                className="px-3 py-1.5 bg-white border border-[#dde1e7] rounded text-[13px] text-[#4b5563] hover:bg-gray-50 transition-colors"
+                disabled={actionLoading}
+                className="px-3 py-1.5 bg-white border border-[#dde1e7] rounded text-[13px] text-[#4b5563] hover:bg-gray-50 disabled:opacity-50 transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
-                onClick={handleFinalise}
-                className="px-3 py-1.5 bg-[#1a3557] text-white rounded text-[13px] hover:bg-[#102540] transition-colors"
+                onClick={handleFinaliseConfirm}
+                disabled={actionLoading}
+                className="px-3 py-1.5 bg-[#1a3557] text-white rounded text-[13px] hover:bg-[#102540] disabled:opacity-50 transition-colors cursor-pointer"
               >
-                Confirm selection
+                {actionLoading ? 'Finalising...' : 'Confirm selection'}
               </button>
             </div>
           </div>

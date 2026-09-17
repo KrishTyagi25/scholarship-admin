@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Download,
   FileText,
@@ -23,46 +23,9 @@ import {
 } from 'recharts';
 import AppShell from '../components/AppShell';
 import StatCard from '../components/StatCard';
+import api from '../api/axios';
 
-/* ─── Mock Data ────────────────────────────────────────────────────────── */
-
-// Chart 1: Application Volume & Approval Trend
-const MONTHLY_DATA = [
-  { month: 'Apr', Received: 1200, Sanctioned: 850 },
-  { month: 'May', Received: 1800, Sanctioned: 1100 },
-  { month: 'Jun', Received: 2400, Sanctioned: 1600 },
-  { month: 'Jul', Received: 3100, Sanctioned: 2100 },
-  { month: 'Aug', Received: 2600, Sanctioned: 1800 },
-  { month: 'Sep', Received: 1380, Sanctioned: 560 },
-];
-
-// Chart 2: Scheme-Wise Budget Allocation vs Utilisation
-const BUDGET_DATA = [
-  { scheme: 'NFST', Allocated: 30, Utilised: 22.4 },
-  { scheme: 'NOS', Allocated: 20, Utilised: 14.8 },
-  { scheme: 'Post-Doc', Allocated: 10, Utilised: 7.2 },
-  { scheme: 'Top Class', Allocated: 8, Utilised: 4.2 },
-];
-
-// Chart 3: Application Status Breakdown
-const STATUS_DATA = [
-  { name: 'Approved & Sanctioned', value: 5420, color: '#16a34a' },
-  { name: 'Under Review', value: 3100, color: '#3b82f6' },
-  { name: 'Pending Verification', value: 1860, color: '#1a3557' },
-  { name: 'Deficient / Action Required', value: 1240, color: '#d97706' },
-  { name: 'Rejected / Ineligible', value: 860, color: '#dc2626' },
-];
-
-// Chart 4: Demographic Breakdown
-const CATEGORY_DATA = [
-  { category: 'ST', Applications: 4800 },
-  { category: 'SC', Applications: 3200 },
-  { category: 'OBC', Applications: 2400 },
-  { category: 'EWS', Applications: 1200 },
-  { category: 'Gen / PwD', Applications: 880 },
-];
-
-// Bottom Table: Top Institutions
+// Top Institutions fallback data if not provided by backend summary
 const TOP_INSTITUTIONS = [
   { name: 'IIT Delhi', state: 'Delhi', beneficiaries: 342, amount: '₹4.10 Cr', rate: 96 },
   { name: 'IISc Bangalore', state: 'Karnataka', beneficiaries: 289, amount: '₹3.80 Cr', rate: 98 },
@@ -72,9 +35,44 @@ const TOP_INSTITUTIONS = [
 ];
 
 export default function Analytics() {
+  // TODO: backend doesn't support scheme/state filtering on analytics yet
   const [schemeFilter, setSchemeFilter] = useState('All');
   const [fyFilter, setFyFilter] = useState('FY 2025-26');
   const [showExportToast, setShowExportToast] = useState(false);
+
+  const [summary, setSummary] = useState(null);
+  const [trendData, setTrendData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchAnalytics() {
+      setLoading(true);
+      setError(null);
+      try {
+        const [sumRes, trendRes] = await Promise.all([
+          api.get('/analytics/summary'),
+          api.get('/analytics/trend?days=30'),
+        ]);
+        if (isMounted) {
+          setSummary(sumRes.data);
+          setTrendData(trendRes.data?.trend || []);
+        }
+      } catch (err) {
+        if (isMounted) {
+          console.error('Failed to load analytics data:', err);
+          setError('Failed to load analytics data. Please try again.');
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    }
+    fetchAnalytics();
+    return () => { isMounted = false; };
+  }, [fyFilter]);
 
   const handleExport = () => {
     setShowExportToast(true);
@@ -83,8 +81,50 @@ export default function Analytics() {
     }, 4000);
   };
 
+  const total = summary?.total || 0;
+  const kpis = summary?.kpis || {};
+  const accuracy = kpis.verificationAccuracy !== undefined ? `${kpis.verificationAccuracy}%` : '—';
+  const resubmission = kpis.resubmissionRate !== undefined ? `${kpis.resubmissionRate}%` : '—';
+  const avgDays = kpis.avgProcessingDays !== undefined ? `${kpis.avgProcessingDays} Days` : '—';
+
+  // Application status breakdown donut chart data
+  const statusData = summary ? [
+    { name: 'Approved & Selected', value: summary.selected || 0, color: '#16a34a' },
+    { name: 'Pending Admin Review', value: summary.pendingReview || 0, color: '#3b82f6' },
+    { name: 'Pending Verification', value: summary.pending || 0, color: '#1a3557' },
+    { name: 'Deficient / Action Required', value: summary.deficient || 0, color: '#d97706' },
+    { name: 'Flagged', value: summary.flagged || 0, color: '#dc2626' },
+    ...(summary.rejected > 0 ? [{ name: 'Rejected / Ineligible', value: summary.rejected, color: '#991b1b' }] : []),
+  ].filter(d => d.value > 0) : [];
+
+  // Scheme-wise data
+  const schemeWiseData = summary?.schemeWise || [];
+
+  // State-wise data
+  const stateWiseData = summary?.stateWise || [];
+
+  // Processing Funnel metrics
+  const pending = summary?.pending || 0;
+  const pendingReview = summary?.pendingReview || 0;
+  const deficient = summary?.deficient || 0;
+  const flagged = summary?.flagged || 0;
+  const selected = summary?.selected || 0;
+  const rejected = summary?.rejected || 0;
+
+  const funnelSubmitted = total;
+  const funnelAiVerified = total - pending;
+  const funnelAdminReviewed = selected + rejected + deficient + flagged;
+  const funnelMeritRanked = pendingReview + selected;
+  const funnelSelected = selected;
+
   return (
     <AppShell title="Analytics Dashboard">
+      {error && (
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-700 text-[13px] rounded">
+          {error}
+        </div>
+      )}
+
       {/* ── Top Control Bar ────────────────────────────────────────────── */}
       <div className="bg-white border border-[#dde1e7] rounded-lg p-4 mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
@@ -150,49 +190,49 @@ export default function Analytics() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <StatCard
           icon={FileText}
-          value="12,480"
+          value={loading ? '...' : total.toLocaleString('en-IN')}
           iconBg="bg-blue-50"
           iconColor="text-[#1a3557]"
           label={
             <div className="flex items-center justify-between gap-1 flex-wrap">
               <span>Total Applications</span>
-              <span className="text-[#16a34a] font-semibold">+14% vs last year</span>
+              <span className="text-[#6b7280]">Based on current data</span>
             </div>
           }
         />
         <StatCard
           icon={IndianRupee}
-          value="₹48.6 Cr"
+          value={loading ? '...' : accuracy}
           iconBg="bg-emerald-50"
           iconColor="text-[#16a34a]"
           label={
             <div className="flex items-center justify-between gap-1 flex-wrap">
-              <span>Total Sanctioned Amount</span>
-              <span className="text-[#16a34a] font-semibold">+8% vs last year</span>
+              <span>AI Verification Accuracy</span>
+              <span className="text-[#6b7280]">Based on current data</span>
             </div>
           }
         />
         <StatCard
           icon={Award}
-          value="64.2%"
+          value={loading ? '...' : resubmission}
           iconBg="bg-amber-50"
           iconColor="text-[#d97706]"
           label={
             <div className="flex items-center justify-between gap-1 flex-wrap">
-              <span>Selection Rate</span>
-              <span className="text-[#dc2626] font-semibold">-2% vs target</span>
+              <span>Resubmission Rate</span>
+              <span className="text-[#6b7280]">Based on current data</span>
             </div>
           }
         />
         <StatCard
           icon={Clock}
-          value="14 Days"
+          value={loading ? '...' : avgDays}
           iconBg="bg-purple-50"
           iconColor="text-purple-600"
           label={
             <div className="flex items-center justify-between gap-1 flex-wrap">
               <span>Avg. Processing Time</span>
-              <span className="text-[#16a34a] font-semibold">-3 days vs last year</span>
+              <span className="text-[#6b7280]">Based on current data</span>
             </div>
           }
         />
@@ -200,64 +240,72 @@ export default function Analytics() {
 
       {/* ── Charts Grid (2x2) ─────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {/* Chart 1: Application Volume & Approval Trend */}
+        {/* Chart 1: Applications Over Time (Trend) */}
         <div className="bg-white border border-[#dde1e7] rounded-lg p-5">
           <div className="mb-4">
             <h3 className="text-sm font-semibold text-[#1c2b3a]">
-              Monthly Application Flow ({fyFilter})
+              Applications Over Time (30 Days)
             </h3>
             <p className="text-xs text-[#6b7280]">
-              Received vs Sanctioned applications by month
+              Daily trend of received vs selected applications
             </p>
           </div>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={MONTHLY_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-              <XAxis dataKey="month" stroke="#6b7280" fontSize={12} tickLine={false} />
-              <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#fff',
-                  borderColor: '#dde1e7',
-                  borderRadius: '6px',
-                  fontSize: '12px'
-                }}
-              />
-              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
-              <Bar dataKey="Received" fill="#1a3557" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Sanctioned" fill="#16a34a" radius={[4, 4, 0, 0]} />
-            </BarChart>
+            {loading ? (
+              <div className="flex items-center justify-center h-full text-xs text-[#9aa3af]">Loading chart...</div>
+            ) : (
+              <BarChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                <XAxis dataKey="date" stroke="#6b7280" fontSize={11} tickLine={false} />
+                <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#fff',
+                    borderColor: '#dde1e7',
+                    borderRadius: '6px',
+                    fontSize: '12px'
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
+                <Bar dataKey="received" name="Received" fill="#1a3557" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="selected" name="Selected" fill="#16a34a" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            )}
           </ResponsiveContainer>
         </div>
 
-        {/* Chart 2: Scheme-Wise Budget Allocation vs Utilisation */}
+        {/* Chart 2: Scheme-Wise Breakdown */}
         <div className="bg-white border border-[#dde1e7] rounded-lg p-5">
           <div className="mb-4">
             <h3 className="text-sm font-semibold text-[#1c2b3a]">
-              Budget Allocation vs Utilisation
+              Scheme-Wise Application Performance
             </h3>
             <p className="text-xs text-[#6b7280]">
-              In ₹ Crores by scheme
+              Received, verified and selected counts by scheme
             </p>
           </div>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={BUDGET_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-              <XAxis dataKey="scheme" stroke="#6b7280" fontSize={12} tickLine={false} />
-              <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} unit=" Cr" />
-              <Tooltip
-                formatter={(val) => `₹${val} Cr`}
-                contentStyle={{
-                  backgroundColor: '#fff',
-                  borderColor: '#dde1e7',
-                  borderRadius: '6px',
-                  fontSize: '12px'
-                }}
-              />
-              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
-              <Bar dataKey="Allocated" fill="#1a3557" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Utilised" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-            </BarChart>
+            {loading ? (
+              <div className="flex items-center justify-center h-full text-xs text-[#9aa3af]">Loading chart...</div>
+            ) : (
+              <BarChart data={schemeWiseData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                <XAxis dataKey="scheme" stroke="#6b7280" fontSize={12} tickLine={false} />
+                <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#fff',
+                    borderColor: '#dde1e7',
+                    borderRadius: '6px',
+                    fontSize: '12px'
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
+                <Bar dataKey="received" name="Received" fill="#1a3557" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="verified" name="Verified" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="selected" name="Selected" fill="#16a34a" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            )}
           </ResponsiveContainer>
         </div>
 
@@ -268,122 +316,212 @@ export default function Analytics() {
               Current Application Status Distribution
             </h3>
             <p className="text-xs text-[#6b7280]">
-              Breakdown of all 12,480 active applications
+              Breakdown of all {total} active applications
             </p>
           </div>
           <ResponsiveContainer width="100%" height={260}>
-            <PieChart>
-              <Pie
-                data={STATUS_DATA}
-                cx="50%"
-                cy="50%"
-                innerRadius={55}
-                outerRadius={85}
-                paddingAngle={3}
-                dataKey="value"
-              >
-                {STATUS_DATA.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip
-                formatter={(val) => val.toLocaleString()}
-                contentStyle={{
-                  backgroundColor: '#fff',
-                  borderColor: '#dde1e7',
-                  borderRadius: '6px',
-                  fontSize: '12px'
-                }}
-              />
-              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
-            </PieChart>
+            {loading ? (
+              <div className="flex items-center justify-center h-full text-xs text-[#9aa3af]">Loading chart...</div>
+            ) : (
+              <PieChart>
+                <Pie
+                  data={statusData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={55}
+                  outerRadius={85}
+                  paddingAngle={3}
+                  dataKey="value"
+                >
+                  {statusData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  formatter={(val) => val.toLocaleString()}
+                  contentStyle={{
+                    backgroundColor: '#fff',
+                    borderColor: '#dde1e7',
+                    borderRadius: '6px',
+                    fontSize: '12px'
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
+              </PieChart>
+            )}
           </ResponsiveContainer>
         </div>
 
-        {/* Chart 4: Demographic Breakdown */}
+        {/* Chart 4: State-Wise Distribution */}
         <div className="bg-white border border-[#dde1e7] rounded-lg p-5">
           <div className="mb-4">
             <h3 className="text-sm font-semibold text-[#1c2b3a]">
-              Demographic Breakdown
+              State-Wise Distribution
             </h3>
             <p className="text-xs text-[#6b7280]">
-              Applications by Category / Reservation Group
+              Applications received per state
             </p>
           </div>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={CATEGORY_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-              <XAxis dataKey="category" stroke="#6b7280" fontSize={12} tickLine={false} />
-              <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#fff',
-                  borderColor: '#dde1e7',
-                  borderRadius: '6px',
-                  fontSize: '12px'
-                }}
-              />
-              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
-              <Bar dataKey="Applications" fill="#1a3557" radius={[4, 4, 0, 0]} />
-            </BarChart>
+            {loading ? (
+              <div className="flex items-center justify-center h-full text-xs text-[#9aa3af]">Loading chart...</div>
+            ) : (
+              <BarChart data={stateWiseData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                <XAxis dataKey="state" stroke="#6b7280" fontSize={11} tickLine={false} />
+                <YAxis stroke="#6b7280" fontSize={12} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#fff',
+                    borderColor: '#dde1e7',
+                    borderRadius: '6px',
+                    fontSize: '12px'
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
+                <Bar dataKey="count" name="Applications" fill="#1a3557" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            )}
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* ── Bottom Table Panel: Top Institutions ────────────────────────── */}
-      <div className="bg-white border border-[#dde1e7] rounded-lg p-5">
-        <div className="mb-4">
-          <h3 className="text-sm font-semibold text-[#1c2b3a]">
-            Top Institutions by Beneficiary Count
-          </h3>
-          <p className="text-xs text-[#6b7280]">
-            Institutions with highest approved scholarship applications
-          </p>
+      {/* ── Processing Funnel & Top Institutions ─────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Processing Funnel Card */}
+        <div className="bg-white border border-[#dde1e7] rounded-lg p-5 flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-[#1c2b3a] mb-1">
+              Processing Funnel
+            </h3>
+            <p className="text-xs text-[#6b7280] mb-4">
+              Conversion across selection pipeline
+            </p>
+            <div className="space-y-3">
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-[#4b5563]">1. Submitted</span>
+                  <span className="font-semibold text-[#1c2b3a]">{funnelSubmitted}</span>
+                </div>
+                <div className="h-1.5 bg-[#f0f2f5] rounded-full overflow-hidden">
+                  <div className="h-full bg-[#1a3557] rounded-full" style={{ width: '100%' }} />
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-[#4b5563]">2. AI Verified</span>
+                  <span className="font-semibold text-[#1c2b3a]">
+                    {funnelAiVerified} ({total > 0 ? Math.round((funnelAiVerified / total) * 100) : 0}%)
+                  </span>
+                </div>
+                <div className="h-1.5 bg-[#f0f2f5] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-500 rounded-full"
+                    style={{ width: `${total > 0 ? (funnelAiVerified / total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-[#4b5563]">3. Admin Reviewed</span>
+                  <span className="font-semibold text-[#1c2b3a]">
+                    {funnelAdminReviewed} ({total > 0 ? Math.round((funnelAdminReviewed / total) * 100) : 0}%)
+                  </span>
+                </div>
+                <div className="h-1.5 bg-[#f0f2f5] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-amber-500 rounded-full"
+                    style={{ width: `${total > 0 ? (funnelAdminReviewed / total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-[#4b5563]">4. Merit Ranked</span>
+                  <span className="font-semibold text-[#1c2b3a]">
+                    {funnelMeritRanked} ({total > 0 ? Math.round((funnelMeritRanked / total) * 100) : 0}%)
+                  </span>
+                </div>
+                <div className="h-1.5 bg-[#f0f2f5] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-purple-500 rounded-full"
+                    style={{ width: `${total > 0 ? (funnelMeritRanked / total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-[#4b5563]">5. Selected</span>
+                  <span className="font-semibold text-[#1c2b3a]">
+                    {funnelSelected} ({total > 0 ? Math.round((funnelSelected / total) * 100) : 0}%)
+                  </span>
+                </div>
+                <div className="h-1.5 bg-[#f0f2f5] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#16a34a] rounded-full"
+                    style={{ width: `${total > 0 ? (funnelSelected / total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-[#dde1e7] bg-[#f8fafc]">
-                <th className="py-2.5 px-3 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider">
-                  Institution Name
-                </th>
-                <th className="py-2.5 px-3 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider">
-                  State
-                </th>
-                <th className="py-2.5 px-3 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider text-right">
-                  Active Beneficiaries
-                </th>
-                <th className="py-2.5 px-3 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider text-right">
-                  Total Sanctioned Amount
-                </th>
-                <th className="py-2.5 px-3 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider text-right">
-                  Disbursement Rate
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#dde1e7]">
-              {TOP_INSTITUTIONS.map((inst, index) => (
-                <tr key={index} className="hover:bg-[#f8fafc] text-xs text-[#1c2b3a] transition-colors">
-                  <td className="py-3 px-3 font-semibold">{inst.name}</td>
-                  <td className="py-3 px-3 text-[#6b7280]">{inst.state}</td>
-                  <td className="py-3 px-3 text-right font-medium">{inst.beneficiaries.toLocaleString()}</td>
-                  <td className="py-3 px-3 text-right font-semibold text-[#1a3557]">{inst.amount}</td>
-                  <td className="py-3 px-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <div className="w-16 bg-[#f3f4f6] h-2 rounded-full overflow-hidden hidden sm:block">
-                        <div
-                          className="bg-[#16a34a] h-full rounded-full"
-                          style={{ width: `${inst.rate}%` }}
-                        />
-                      </div>
-                      <span className="font-semibold text-emerald-700">{inst.rate}%</span>
-                    </div>
-                  </td>
+        {/* Top Institutions Table */}
+        <div className="lg:col-span-2 bg-white border border-[#dde1e7] rounded-lg p-5">
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-[#1c2b3a]">
+              Top Institutions by Beneficiary Count
+            </h3>
+            <p className="text-xs text-[#6b7a8d]">
+              Institutions with highest approved scholarship applications
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-[#dde1e7] bg-[#f8fafc]">
+                  <th className="py-2.5 px-3 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider">
+                    Institution Name
+                  </th>
+                  <th className="py-2.5 px-3 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider">
+                    State
+                  </th>
+                  <th className="py-2.5 px-3 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider text-right">
+                    Active Beneficiaries
+                  </th>
+                  <th className="py-2.5 px-3 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider text-right">
+                    Total Sanctioned Amount
+                  </th>
+                  <th className="py-2.5 px-3 text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider text-right">
+                    Disbursement Rate
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-[#dde1e7]">
+                {TOP_INSTITUTIONS.map((inst, index) => (
+                  <tr key={index} className="hover:bg-[#f8fafc] text-xs text-[#1c2b3a] transition-colors">
+                    <td className="py-3 px-3 font-semibold">{inst.name}</td>
+                    <td className="py-3 px-3 text-[#6b7280]">{inst.state}</td>
+                    <td className="py-3 px-3 text-right font-medium">{inst.beneficiaries.toLocaleString()}</td>
+                    <td className="py-3 px-3 text-right font-semibold text-[#1a3557]">{inst.amount}</td>
+                    <td className="py-3 px-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <div className="w-16 bg-[#f3f4f6] h-2 rounded-full overflow-hidden hidden sm:block">
+                          <div
+                            className="bg-[#16a34a] h-full rounded-full"
+                            style={{ width: `${inst.rate}%` }}
+                          />
+                        </div>
+                        <span className="font-semibold text-emerald-700">{inst.rate}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </AppShell>
