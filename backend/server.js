@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/authRoutes');
+const applicationRoutes = require('./routes/applicationRoutes');
 
 connectDB();
 
@@ -12,6 +13,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use('/api/admin', authRoutes);
+app.use('/api', applicationRoutes);
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Scholarship admin API running' });
