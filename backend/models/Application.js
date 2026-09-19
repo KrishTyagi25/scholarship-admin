@@ -22,6 +22,11 @@ const applicationSchema = new mongoose.Schema(
   {
     applicationCode: { type: String, required: true, unique: true },
 
+    // Links this application to the student account that submitted it.
+    // Optional at the schema level because earlier demo/seed data has no
+    // real student account behind it — new submissions always set this.
+    student: { type: mongoose.Schema.Types.ObjectId, ref: 'Student' },
+
     // Applicant info
     name: { type: String, required: true },
     email: { type: String, required: true },
